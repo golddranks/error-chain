@@ -317,7 +317,7 @@ macro_rules! error_chain {
     (
         types {
             $error_name:ident, $error_kind_name:ident,
-            $chain_error_name:ident, $result_name:ident;
+            $chain_error_name:ident, $caused_error_name:ident, $result_name:ident;
         }
 
         links {
@@ -460,6 +460,12 @@ macro_rules! error_chain {
             }
         }
 
+        impl $error_kind_name {
+            pub fn to_err(self) -> Error {
+                Error::from(self)
+            }
+        }
+
         $(
             impl From<$link_kind_path> for $error_kind_name {
                 fn from(e: $link_kind_path) -> Self {
@@ -490,19 +496,36 @@ macro_rules! error_chain {
                       EK: Into<$error_kind_name>;
         }
 
-        impl<T, E> $chain_error_name<T> for ::std::result::Result<T, E>
+        pub trait $caused_error_name {
+            fn caused_err<F, EK>(self, callback: F) -> $error_name
+                where F: FnOnce() -> EK,
+                        EK: Into<$error_kind_name>;
+        }
+
+        impl<E> $caused_error_name for E
             where E: ::std::error::Error + Send + 'static
+        {
+            fn caused_err<F, EK>(self, callback: F) -> $error_name
+                where F: FnOnce() -> EK,
+                        EK: Into<$error_kind_name>
+            {
+                let e = Box::new(self) as Box<::std::error::Error + Send + 'static>;
+                let (e, backtrace) = backtrace_from_box(e);
+                let backtrace = backtrace.unwrap_or_else($crate::make_backtrace);
+
+                $error_name(callback().into(), (Some(e), backtrace))
+            }
+        }
+
+        impl<T, E> $chain_error_name<T> for ::std::result::Result<T, E>
+            where E: $caused_error_name
         {
             fn chain_err<F, EK>(self, callback: F) -> ::std::result::Result<T, $error_name>
                 where F: FnOnce() -> EK,
                       EK: Into<$error_kind_name>
             {
                 self.map_err(move |e| {
-                    let e = Box::new(e) as Box<::std::error::Error + Send + 'static>;
-                    let (e, backtrace) = backtrace_from_box(e);
-                    let backtrace = backtrace.unwrap_or_else($crate::make_backtrace);
-
-                    $error_name(callback().into(), (Some(e), backtrace))
+                    e.caused_err(callback)
                 })
             }
         }
@@ -555,7 +578,7 @@ macro_rules! error_chain {
     (
         types {
             $error_name:ident, $error_kind_name:ident,
-            $chain_error_name:ident, $result_name:ident;
+            $chain_error_name:ident, $caused_error_name:ident, $result_name:ident;
         }
 
         $( links {
@@ -572,7 +595,7 @@ macro_rules! error_chain {
     ) => (
         error_chain! {
             types {
-                $error_name, $error_kind_name, $chain_error_name, $result_name;
+                $error_name, $error_kind_name, $chain_error_name, $caused_error_name, $result_name;
             }
 
             links {
@@ -606,7 +629,7 @@ macro_rules! error_chain {
     ) => (
         error_chain! {
             types {
-                Error, ErrorKind, ChainErr, Result;
+                Error, ErrorKind, ChainErr, CausedErr, Result;
             }
 
             links {
